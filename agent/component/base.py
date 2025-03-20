@@ -133,6 +133,8 @@ class ComponentParamBase(ABC):
             ret_dict = {}
             
             # 遍历对象的所有属性
+            # 遍历对象的所有属性名称
+            # 使用list()将__dict__转换为列表,避免在遍历过程中修改字典导致的问题
             for attr_name in list(obj.__dict__):
                 # 跳过内部管理属性（以下划线开头的特殊属性）
                 if attr_name in [_FEEDED_DEPRECATED_PARAMS,  # 已配置的弃用参数
@@ -274,52 +276,94 @@ class ComponentParamBase(ABC):
 
     def validate(self):
         """验证参数值是否符合规则"""
+        # 1. 获取所有Python内置类型的名称列表
         self.builtin_types = dir(builtins)
+        
+        # 2. 定义验证函数字典，将验证操作符映射到对应的验证方法
         self.func = {
-            "ge": self._greater_equal_than,
-            "le": self._less_equal_than,
-            "in": self._in,
-            "not_in": self._not_in,
-            "range": self._range,
+            "ge": self._greater_equal_than,    # 大于等于
+            "le": self._less_equal_than,       # 小于等于
+            "in": self._in,                    # 包含于
+            "not_in": self._not_in,           # 不包含于
+            "range": self._range,             # 范围检查
         }
+        
+        # 3. 构建验证规则文件的路径
+        # 3.1 获取当前文件的绝对路径
         home_dir = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+        # 3.2 构建验证规则文件所在目录的路径
         param_validation_path_prefix = home_dir + "/param_validation/"
 
+        # 4. 获取当前参数类的类名
         param_name = type(self).__name__
+        # 4.1 构建完整的验证规则文件路径
+        # 例如：如果类名为 MyParam，则文件路径为 .../param_validation/MyParam.json
         param_validation_path = "/".join(
             [param_validation_path_prefix, param_name + ".json"]
         )
 
+        # 5. 初始化验证规则变量
         validation_json = None
 
+        # 6. 尝试读取并解析验证规则文件
         try:
+            # 6.1 打开验证规则文件
             with open(param_validation_path, "r") as fin:
+                # 6.2 将JSON文件内容解析为Python对象
                 validation_json = json.loads(fin.read())
         except BaseException:
+            # 6.3 如果文件不存在或解析失败，直接返回
+            # 这意味着该参数类没有特定的验证规则
             return
 
+        # 7. 使用加载的验证规则执行参数验证
+        # 调用_validate_param方法进行实际的验证工作
         self._validate_param(self, validation_json)
 
     def _validate_param(self, param_obj, validation_json):
+        """递归验证参数对象的所有属性是否符合验证规则
+        
+        Args:
+            param_obj: 需要验证的参数对象
+            validation_json: 包含验证规则的JSON对象
+        """
+        # 1. 获取参数对象的类名，用作验证规则中的节点名
         default_section = type(param_obj).__name__
+        
+        # 2. 获取参数对象的所有属性列表
         var_list = param_obj.__dict__
 
+        # 3. 遍历所有属性进行验证
         for variable in var_list:
+            # 3.1 获取当前属性的值
             attr = getattr(param_obj, variable)
 
+            # 3.2 处理内置类型或None值的情况
             if type(attr).__name__ in self.builtin_types or attr is None:
+                # 如果该属性没有对应的验证规则，跳过验证
                 if variable not in validation_json:
                     continue
 
+                # 获取该属性的验证规则字典
+                # 例如：{"ge": 0, "le": 100} 表示值应该在0到100之间
                 validation_dict = validation_json[default_section][variable]
+                
+                # 重新获取属性值（确保使用最新值）
                 value = getattr(param_obj, variable)
+                
+                # 标记值是否合法的标志
                 value_legal = False
 
+                # 遍历所有验证规则
                 for op_type in validation_dict:
+                    # 使用对应的验证函数检查值是否合法
+                    # self.func[op_type]可能是：_greater_equal_than, _less_equal_than等
+                    # validation_dict[op_type]是验证的目标值
                     if self.func[op_type](value, validation_dict[op_type]):
                         value_legal = True
                         break
 
+                # 如果所有规则验证后值仍然不合法，抛出异常
                 if not value_legal:
                     raise ValueError(
                         "Plase check runtime conf, {} = {} does not match user-parameter restriction".format(
@@ -327,7 +371,9 @@ class ComponentParamBase(ABC):
                         )
                     )
 
+            # 3.3 处理自定义类型的情况（递归验证）
             elif variable in validation_json:
+                # 递归调用验证方法，处理嵌套的参数对象
                 self._validate_param(attr, validation_json)
 
     # 各种参数检查的静态方法
@@ -527,29 +573,46 @@ class ComponentBase(ABC):
         获取组件输出
         
         Args:
-            allow_partial: 是否允许部分输出
+            allow_partial: 是否允许部分输出，默认为True
+                          当为True时允许返回partial对象(延迟执行的函数)
+                          当为False时会执行partial对象获取实际结果
         """
+        # 获取组件的输出变量值
         o = getattr(self._param, self._param.output_var_name)
+        
+        # 情况1: 如果输出不是partial对象(即不是延迟执行的函数)
         if not isinstance(o, partial):
+            # 1.1 如果输出不是DataFrame格式
             if not isinstance(o, pd.DataFrame):
+                # 如果是列表,转换为DataFrame
                 if isinstance(o, list):
                     return self._param.output_var_name, pd.DataFrame(o)
+                # 如果是None,返回空DataFrame    
                 if o is None:
                     return self._param.output_var_name, pd.DataFrame()
+                # 其他情况,将输出转为字符串并包装为DataFrame    
                 return self._param.output_var_name, pd.DataFrame([{"content": str(o)}])
+            # 1.2 如果本身就是DataFrame,直接返回
             return self._param.output_var_name, o
 
+        # 情况2: 如果允许partial输出或输出不是partial对象
         if allow_partial or not isinstance(o, partial):
+            # 2.1 如果不是partial且不是DataFrame,转换为DataFrame
             if not isinstance(o, partial) and not isinstance(o, pd.DataFrame):
                 return pd.DataFrame(o if isinstance(o, list) else [o])
+            # 2.2 其他情况直接返回
             return self._param.output_var_name, o
 
+        # 情况3: 不允许partial输出且输出是partial对象
         outs = None
+        # 执行partial对象获取实际结果
         for oo in o():
+            # 如果结果不是DataFrame,转换为DataFrame
             if not isinstance(oo, pd.DataFrame):
                 outs = pd.DataFrame(oo if isinstance(oo, list) else [oo])
             else:
                 outs = oo
+        # 返回最终结果        
         return self._param.output_var_name, outs
 
     def reset(self):
@@ -562,93 +625,163 @@ class ComponentBase(ABC):
         setattr(self._param, self._param.output_var_name, v)
 
     def get_input(self):
-        """获取组件输入"""
+        """获取组件输入
+        
+        这个方法用于获取组件的输入数据，包含三种主要的输入来源：
+        1. 调试输入 (debug_inputs)
+        2. 查询参数输入 (query)
+        3. 上游组件输出 (upstream_outs)
+        """
+        # 1. 首先检查是否有调试输入
+        # 如果存在调试输入，优先处理这些输入
         if self._param.debug_inputs:
+            # 使用列表推导式处理调试输入：
+            # 1. 遍历所有调试输入
+            # 2. 只处理包含"value"的输入项
+            # 3. 将每个输入转换为标准的DataFrame格式
             return pd.DataFrame([{"content": v["value"]} for v in self._param.debug_inputs if v.get("value")])
 
+        # 2. 获取组件路径
+        # 初始化一个空列表用于存储反转的组件路径
         reversed_cpnts = []
+        # 如果路径长度大于1，添加倒数第二个路径
         if len(self._canvas.path) > 1:
-            reversed_cpnts.extend(self._canvas.path[-2])
-        reversed_cpnts.extend(self._canvas.path[-1])
+            reversed_cpnts.extend(self._canvas.path[-2])  # 添加倒数第二个路径
+        # 添加最后一个路径
+        reversed_cpnts.extend(self._canvas.path[-1])      # 添加最后一个路径
 
+        # 3. 处理查询参数输入
         if self._param.query:
-            self._param.inputs = []
-            outs = []
+            # 清空现有的输入列表，准备重新填充
+            self._param.inputs = []  # 清空现有输入
+            # 初始化输出列表，用于存储所有处理结果
+            outs = []  # 存储所有输出结果
+            
+            # 遍历每个查询参数
             for q in self._param.query:
-                if q.get("component_id"):
+                # 3.1 处理来自其他组件的查询
+                if q.get("component_id"):  # 如果查询来自其他组件
+                    # 3.1.1 处理begin类型组件
                     if q["component_id"].split("@")[0].lower().find("begin") >= 0:
+                        # 解析组件ID和参数键
                         cpn_id, key = q["component_id"].split("@")
+                        # 在begin组件中查找对应的参数
                         for p in self._canvas.get_component(cpn_id)["obj"]._param.query:
+                            # 如果找到匹配的参数键
                             if p["key"] == key:
+                                # 将参数值添加到输出列表
                                 outs.append(pd.DataFrame([{"content": p.get("value", "")}]))
-                                self._param.inputs.append({"component_id": q["component_id"],
-                                                           "content": p.get("value", "")})
+                                # 将参数信息添加到输入列表
+                                self._param.inputs.append({
+                                    "component_id": q["component_id"],
+                                    "content": p.get("value", "")
+                                })
                                 break
                         else:
+                            # 如果没有找到匹配的参数，抛出异常
                             assert False, f"Can't find parameter '{key}' for {cpn_id}"
                         continue
 
+                    # 3.1.2 处理answer类型组件
                     if q["component_id"].lower().find("answer") == 0:
+                        # 初始化消息文本列表
                         txt = []
+                        # 处理历史消息记录
                         for r, c in self._canvas.history[::-1][:self._param.message_history_window_size][::-1]:
+                            # 格式化每条消息
                             txt.append(f"{r.upper()}: {c}")
+                        # 合并所有消息
                         txt = "\n".join(txt)
-                        self._param.inputs.append({"content": txt, "component_id": q["component_id"]})
+                        # 添加到输入列表
+                        self._param.inputs.append({
+                            "content": txt,
+                            "component_id": q["component_id"]
+                        })
+                        # 添加到输出列表
                         outs.append(pd.DataFrame([{"content": txt}]))
                         continue
 
+                    # 3.1.3 处理其他类型组件
+                    # 获取组件输出并添加到输出列表
                     outs.append(self._canvas.get_component(q["component_id"])["obj"].output(allow_partial=False)[1])
-                    self._param.inputs.append({"component_id": q["component_id"],
-                                               "content": "\n".join(
-                                                   [str(d["content"]) for d in outs[-1].to_dict('records')])})
+                    # 将组件输出添加到输入列表
+                    self._param.inputs.append({
+                        "component_id": q["component_id"],
+                        "content": "\n".join([str(d["content"]) for d in outs[-1].to_dict('records')])
+                    })
+                
+                # 3.2 处理直接值输入
                 elif q.get("value"):
+                    # 将直接值添加到输入列表
                     self._param.inputs.append({"component_id": None, "content": q["value"]})
+                    # 将直接值添加到输出列表
                     outs.append(pd.DataFrame([{"content": q["value"]}]))
+                
+            # 3.3 合并所有输出结果
             if outs:
+                # 合并所有DataFrame
                 df = pd.concat(outs, ignore_index=True)
+                # 如果存在content列，去除重复内容
                 if "content" in df:
                     df = df.drop_duplicates(subset=['content']).reset_index(drop=True)
                 return df
 
+        # 4. 处理上游组件输出
+        # 初始化上游输出列表
         upstream_outs = []
-
+        
+        # 遍历反转的组件路径
         for u in reversed_cpnts[::-1]:
+            # 4.1 跳过特殊组件
             if self.get_component_name(u) in ["switch", "concentrator"]:
                 continue
+            
+            # 4.2 处理generate和retrieval组件的特殊情况
             if self.component_name.lower() == "generate" and self.get_component_name(u) == "retrieval":
                 o = self._canvas.get_component(u)["obj"].output(allow_partial=False)[1]
                 if o is not None:
                     o["component_id"] = u
                     upstream_outs.append(o)
                     continue
-            #if self.component_name.lower()!="answer" and u not in self._canvas.get_component(self._id)["upstream"]: continue
+                
+            # 4.3 跳过relevant和categorize组件
             if self.component_name.lower().find("switch") < 0 \
                     and self.get_component_name(u) in ["relevant", "categorize"]:
                 continue
+            
+            # 4.4 处理answer组件
             if u.lower().find("answer") >= 0:
                 for r, c in self._canvas.history[::-1]:
                     if r == "user":
                         upstream_outs.append(pd.DataFrame([{"content": c, "component_id": u}]))
                         break
                 break
+            
+            # 4.5 跳过answer组件的relevant输入
             if self.component_name.lower().find("answer") >= 0 and self.get_component_name(u) in ["relevant"]:
                 continue
+            
+            # 4.6 获取普通组件输出
             o = self._canvas.get_component(u)["obj"].output(allow_partial=False)[1]
             if o is not None:
                 o["component_id"] = u
                 upstream_outs.append(o)
             break
 
+        # 5. 确保有上游输出
         assert upstream_outs, "Can't inference the where the component input is. Please identify whose output is this component's input."
 
+        # 6. 合并所有上游输出
         df = pd.concat(upstream_outs, ignore_index=True)
         if "content" in df:
             df = df.drop_duplicates(subset=['content']).reset_index(drop=True)
 
+        # 7. 更新输入列表
         self._param.inputs = []
         for _, r in df.iterrows():
             self._param.inputs.append({"component_id": r["component_id"], "content": r["content"]})
 
+        # 8. 返回最终结果
         return df
 
     def get_input_elements(self):
