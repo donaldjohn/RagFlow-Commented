@@ -25,17 +25,21 @@ from agent.component import component_class
 from agent.component.base import ComponentBase
 
 
+# Canvas类 - 工作流引擎的核心实现
 class Canvas(ABC):
     """
+    Canvas类用于管理和执行工作流
+    
+    DSL示例结构:
     dsl = {
-        "components": {
-            "begin": {
+        "components": {                # 组件配置
+            "begin": {                 # 开始组件
                 "obj":{
-                    "component_name": "Begin",
-                    "params": {},
+                    "component_name": "Begin",  # 组件类型
+                    "params": {},              # 组件参数
                 },
-                "downstream": ["answer_0"],
-                "upstream": [],
+                "downstream": ["answer_0"],    # 下游连接的组件
+                "upstream": [],                # 上游连接的组件
             },
             "answer_0": {
                 "obj": {
@@ -62,27 +66,35 @@ class Canvas(ABC):
                 "upstream": ["retrieval_0"],
             }
         },
-        "history": [],
-        "messages": [],
-        "reference": [],
-        "path": [["begin"]],
-        "answer": []
+        "history": [],    # 历史记录
+        "messages": [],   # 消息列表
+        "reference": [],  # 引用信息
+        "path": [["begin"]],      # 执行路径
+        "answer": []     # 答案列表
     }
     """
 
     def __init__(self, dsl: str, tenant_id=None):
-        self.path = []
-        self.history = []
-        self.messages = []
-        self.answer = []
-        self.components = {}
+        """
+        初始化Canvas实例
+        
+        Args:
+            dsl: DSL配置字符串
+            tenant_id: 租户ID
+        """
+        self.path = []          # 执行路径
+        self.history = []       # 历史记录
+        self.messages = []      # 消息列表
+        self.answer = []        # 答案列表
+        self.components = {}    # 组件字典
+        # 如果没有提供DSL，创建默认配置
         self.dsl = json.loads(dsl) if dsl else {
             "components": {
                 "begin": {
                     "obj": {
                         "component_name": "Begin",
                         "params": {
-                            "prologue": "Hi there!"
+                            "prologue": "Hi there!"  # 开场白
                         }
                     },
                     "downstream": [],
@@ -101,25 +113,38 @@ class Canvas(ABC):
         self.load()
 
     def load(self):
+        """
+        加载并验证DSL配置
+        - 检查必需组件
+        - 初始化组件参数
+        - 验证组件配置
+        """
         self.components = self.dsl["components"]
         cpn_nms = set([])
+        # 收集所有组件名称
         for k, cpn in self.components.items():
             cpn_nms.add(cpn["obj"]["component_name"])
 
-        assert "Begin" in cpn_nms, "There have to be an 'Begin' component."
-        assert "Answer" in cpn_nms, "There have to be an 'Answer' component."
+        # 验证必需组件
+        assert "Begin" in cpn_nms, "必须包含'Begin'组件"
+        assert "Answer" in cpn_nms, "必须包含'Answer'组件"
 
+        # 初始化每个组件
         for k, cpn in self.components.items():
             cpn_nms.add(cpn["obj"]["component_name"])
+            # 创建组件参数实例
             param = component_class(cpn["obj"]["component_name"] + "Param")()
             param.update(cpn["obj"]["params"])
             param.check()
+            # 创建组件实例
             cpn["obj"] = component_class(cpn["obj"]["component_name"])(self, k, param)
+            # 处理Categorize组件的特殊逻辑
             if cpn["obj"].component_name == "Categorize":
                 for _, desc in param.category_description.items():
                     if desc["to"] not in cpn["downstream"]:
                         cpn["downstream"].append(desc["to"])
 
+        # 加载其他配置
         self.path = self.dsl["path"]
         self.history = self.dsl["history"]
         self.messages = self.dsl["messages"]
@@ -169,6 +194,16 @@ class Canvas(ABC):
         return ""
 
     def run(self, **kwargs):
+        """
+        执行工作流
+        
+        Args:
+            **kwargs: 运行参数，支持stream等选项
+            
+        Yields:
+            工作流执行结果
+        """
+        # 处理答案组件
         if self.answer:
             cpn_id = self.answer[0]
             self.answer.pop(0)
@@ -184,12 +219,14 @@ class Canvas(ABC):
                 yield ans
             return
 
+        # 初始化执行路径
         if not self.path:
             self.components["begin"]["obj"].run(self.history, **kwargs)
             self.path.append(["begin"])
 
         self.path.append([])
 
+        # 执行工作流逻辑
         ran = -1
         waiting = []
         without_dependent_checking = []
@@ -320,6 +357,15 @@ class Canvas(ABC):
         return self._embed_id
 
     def _find_loop(self, max_loops=6):
+        """
+        检测工作流中的循环
+        
+        Args:
+            max_loops: 最大允许的循环次数
+            
+        Returns:
+            False或循环路径描述
+        """
         path = self.path[-1][::-1]
         if len(path) < 2:
             return False
