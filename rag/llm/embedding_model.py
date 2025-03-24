@@ -260,14 +260,16 @@ class OllamaEmbed(Base):
         tks_num = 0
         for txt in texts:
             res = self.client.embeddings(prompt=txt,
-                                         model=self.model_name)
+                                         model=self.model_name,
+                                         options={"use_mmap": True})
             arr.append(res["embedding"])
             tks_num += 128
         return np.array(arr), tks_num
 
     def encode_queries(self, text):
         res = self.client.embeddings(prompt=text,
-                                     model=self.model_name)
+                                     model=self.model_name,
+                                     options={"use_mmap": True})
         return np.array(res["embedding"]), 128
 
 
@@ -476,8 +478,13 @@ class BedrockEmbed(Base):
         self.bedrock_sk = json.loads(key).get('bedrock_sk', '')
         self.bedrock_region = json.loads(key).get('bedrock_region', '')
         self.model_name = model_name
-        self.client = boto3.client(service_name='bedrock-runtime', region_name=self.bedrock_region,
-                                   aws_access_key_id=self.bedrock_ak, aws_secret_access_key=self.bedrock_sk)
+        
+        if self.bedrock_ak == '' or self.bedrock_sk == '' or self.bedrock_region == '':
+            # Try to create a client using the default credentials (AWS_PROFILE, AWS_DEFAULT_REGION, etc.)
+            self.client = boto3.client('bedrock-runtime')
+        else:
+            self.client = boto3.client(service_name='bedrock-runtime', region_name=self.bedrock_region,
+                                    aws_access_key_id=self.bedrock_ak, aws_secret_access_key=self.bedrock_sk)
 
     def encode(self, texts: list):
         texts = [truncate(t, 8196) for t in texts]

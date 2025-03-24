@@ -22,10 +22,9 @@ fi
 
 # 定义任务执行函数
 function task_exe(){
-    # 无限循环执行任务
+    JEMALLOC_PATH=$(pkg-config --variable=libdir jemalloc)/libjemalloc.so
     while [ 1 -eq 1 ];do
-      # $1 是传递给task_exe函数的第一个参数,表示任务执行器的ID号(0到WS-1)
-      $PY rag/svr/task_executor.py $1;
+      LD_PRELOAD=$JEMALLOC_PATH $PY rag/svr/task_executor.py $1;
     done
 }
 

@@ -257,9 +257,6 @@ export const useUploadNextDocument = () => {
       try {
         const ret = await kbService.document_upload(formData);
         const code = get(ret, 'data.code');
-        if (code === 0) {
-          message.success(i18n.t('message.uploaded'));
-        }
 
         if (code === 0 || code === 500) {
           queryClient.invalidateQueries({ queryKey: ['fetchDocumentList'] });
@@ -267,7 +264,10 @@ export const useUploadNextDocument = () => {
         return ret?.data;
       } catch (error) {
         console.warn(error);
-        return {};
+        return {
+          code: 500,
+          message: error + '',
+        };
       }
     },
   });

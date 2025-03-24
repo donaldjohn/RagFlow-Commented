@@ -586,8 +586,7 @@ class ComponentBase(ABC):
             if not isinstance(o, pd.DataFrame):
                 # 如果是列表,转换为DataFrame
                 if isinstance(o, list):
-                    return self._param.output_var_name, pd.DataFrame(o)
-                # 如果是None,返回空DataFrame    
+                    return self._param.output_var_name, pd.DataFrame(o).dropna()
                 if o is None:
                     return self._param.output_var_name, pd.DataFrame()
                 # 其他情况,将输出转为字符串并包装为DataFrame    
@@ -599,8 +598,7 @@ class ComponentBase(ABC):
         if allow_partial or not isinstance(o, partial):
             # 2.1 如果不是partial且不是DataFrame,转换为DataFrame
             if not isinstance(o, partial) and not isinstance(o, pd.DataFrame):
-                return pd.DataFrame(o if isinstance(o, list) else [o])
-            # 2.2 其他情况直接返回
+                return pd.DataFrame(o if isinstance(o, list) else [o]).dropna()
             return self._param.output_var_name, o
 
         # 情况3: 不允许partial输出且输出是partial对象
@@ -609,10 +607,9 @@ class ComponentBase(ABC):
         for oo in o():
             # 如果结果不是DataFrame,转换为DataFrame
             if not isinstance(oo, pd.DataFrame):
-                outs = pd.DataFrame(oo if isinstance(oo, list) else [oo])
+                outs = pd.DataFrame(oo if isinstance(oo, list) else [oo]).dropna()
             else:
-                outs = oo
-        # 返回最终结果        
+                outs = oo.dropna()
         return self._param.output_var_name, outs
 
     def reset(self):
@@ -646,9 +643,10 @@ class ComponentBase(ABC):
         reversed_cpnts = []
         # 如果路径长度大于1，添加倒数第二个路径
         if len(self._canvas.path) > 1:
-            reversed_cpnts.extend(self._canvas.path[-2])  # 添加倒数第二个路径
-        # 添加最后一个路径
-        reversed_cpnts.extend(self._canvas.path[-1])      # 添加最后一个路径
+            reversed_cpnts.extend(self._canvas.path[-2])
+        reversed_cpnts.extend(self._canvas.path[-1])
+        up_cpns = self.get_upstream()
+        reversed_up_cpnts = [cpn for cpn in reversed_cpnts if cpn in up_cpns]
 
         # 3. 处理查询参数输入
         if self._param.query:
@@ -688,9 +686,7 @@ class ComponentBase(ABC):
                         txt = []
                         # 处理历史消息记录
                         for r, c in self._canvas.history[::-1][:self._param.message_history_window_size][::-1]:
-                            # 格式化每条消息
-                            txt.append(f"{r.upper()}: {c}")
-                        # 合并所有消息
+                            txt.append(f"{r.upper()}:{c}")
                         txt = "\n".join(txt)
                         # 添加到输入列表
                         self._param.inputs.append({
@@ -729,10 +725,8 @@ class ComponentBase(ABC):
         # 4. 处理上游组件输出
         # 初始化上游输出列表
         upstream_outs = []
-        
-        # 遍历反转的组件路径
-        for u in reversed_cpnts[::-1]:
-            # 4.1 跳过特殊组件
+
+        for u in reversed_up_cpnts[::-1]:
             if self.get_component_name(u) in ["switch", "concentrator"]:
                 continue
             
@@ -785,8 +779,7 @@ class ComponentBase(ABC):
         return df
 
     def get_input_elements(self):
-        """获取输入元素列表"""
-        assert self._param.query, "Please identify input parameters firstly."
+        assert self._param.query, "Please verify the input parameters first."
         eles = []
         for q in self._param.query:
             if q.get("component_id"):
@@ -796,7 +789,7 @@ class ComponentBase(ABC):
                     eles.extend(self._canvas.get_component(cpn_id)["obj"]._param.query)
                     continue
 
-                eles.append({"name": self._canvas.get_compnent_name(cpn_id), "key": cpn_id})
+                eles.append({"name": self._canvas.get_component_name(cpn_id), "key": cpn_id})
             else:
                 eles.append({"key": q["value"], "name": q["value"], "value": q["value"]})
         return eles
@@ -807,8 +800,10 @@ class ComponentBase(ABC):
         if len(self._canvas.path) > 1:
             reversed_cpnts.extend(self._canvas.path[-2])
         reversed_cpnts.extend(self._canvas.path[-1])
+        up_cpns = self.get_upstream()
+        reversed_up_cpnts = [cpn for cpn in reversed_cpnts if cpn in up_cpns]
 
-        for u in reversed_cpnts[::-1]:
+        for u in reversed_up_cpnts[::-1]:
             if self.get_component_name(u) in ["switch", "answer"]:
                 continue
             return self._canvas.get_component(u)["obj"].output()[1]
@@ -830,3 +825,7 @@ class ComponentBase(ABC):
         """获取父组件"""
         pid = self._canvas.get_component(self._id)["parent_id"]
         return self._canvas.get_component(pid)["obj"]
+
+    def get_upstream(self):
+        cpn_nms = self._canvas.get_component(self._id)['upstream']
+        return cpn_nms

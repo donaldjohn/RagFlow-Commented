@@ -57,7 +57,7 @@ class Template(ComponentBase):
                     res.append({"key": r.group(1), "name": p["name"]})
                     key_set.add(r.group(1))
                 continue
-            cpn_nm = self._canvas.get_compnent_name(cpn_id)
+            cpn_nm = self._canvas.get_component_name(cpn_id)
             if not cpn_nm:
                 continue
             res.append({"key": cpn_id, "name": cpn_nm})
@@ -109,15 +109,13 @@ class Template(ComponentBase):
             pass
 
         for n, v in kwargs.items():
-            try:
-                v = json.dumps(v, ensure_ascii=False)
-            except Exception:
-                pass
+            if not isinstance(v, str):
+                try:
+                    v = json.dumps(v, ensure_ascii=False)
+                except Exception:
+                    pass
             content = re.sub(
                 r"\{%s\}" % re.escape(n), v, content
-            )
-            content = re.sub(
-                r"(\\\"|\")", "", content
             )
             content = re.sub(
                 r"(#+)", r" \1 ", content
