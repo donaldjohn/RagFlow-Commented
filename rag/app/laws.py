@@ -14,6 +14,12 @@
 #  limitations under the License.
 #
 
+"""
+法律文档解析模块
+该模块提供了对法律文档（包括PDF、DOCX、TXT等格式）的解析功能
+主要包含文档分块、文本提取和结构化处理等功能
+"""
+
 import logging
 from tika import parser
 import re
@@ -29,14 +35,25 @@ from deepdoc.parser import PdfParser, DocxParser, PlainParser, HtmlParser
 
 
 class Docx(DocxParser):
+    """DOCX文档解析器类
+    继承自DocxParser，专门用于处理法律文档中的DOCX格式文件
+    提供文档分页、文本清理和结构化处理等功能
+    """
+    
     def __init__(self):
         pass
 
     def __clean(self, line):
+        """清理文本行
+        移除全角空格并去除首尾空白字符
+        """
         line = re.sub(r"\u3000", " ", line).strip()
         return line
 
     def old_call(self, filename, binary=None, from_page=0, to_page=100000):
+        """旧版本的文档解析方法
+        按页解析文档，返回清理后的文本行列表
+        """
         self.doc = Document(
             filename) if not binary else Document(BytesIO(binary))
         pn = 0
@@ -55,6 +72,10 @@ class Docx(DocxParser):
         return [line for line in lines if line]
 
     def __call__(self, filename, binary=None, from_page=0, to_page=100000):
+        """文档解析的主要方法
+        解析文档并返回结构化的章节内容
+        支持分页处理，并保持文档的层级结构
+        """
         self.doc = Document(
             filename) if not binary else Document(BytesIO(binary))
         pn = 0
@@ -100,6 +121,7 @@ class Docx(DocxParser):
         return [s for s in sections if s]
 
     def __str__(self) -> str:
+        """返回对象的字符串表示"""
         return f'''
             question:{self.question},
             answer:{self.answer},
@@ -109,12 +131,21 @@ class Docx(DocxParser):
 
 
 class Pdf(PdfParser):
+    """PDF文档解析器类
+    继承自PdfParser，专门用于处理法律文档中的PDF格式文件
+    提供OCR识别、布局分析和文本提取等功能
+    """
+    
     def __init__(self):
         self.model_speciess = ParserType.LAWS.value
         super().__init__()
 
     def __call__(self, filename, binary=None, from_page=0,
                  to_page=100000, zoomin=3, callback=None):
+        """PDF文档解析的主要方法
+        包含OCR识别、布局分析和文本提取等步骤
+        支持进度回调，可以实时反馈处理进度
+        """
         from timeit import default_timer as timer
         start = timer()
         callback(msg="OCR started")
@@ -142,8 +173,18 @@ class Pdf(PdfParser):
 
 def chunk(filename, binary=None, from_page=0, to_page=100000,
           lang="Chinese", callback=None, **kwargs):
-    """
-        Supported file formats are docx, pdf, txt.
+    """文档分块处理的主函数
+    支持多种文档格式（docx、pdf、txt、html、doc）的解析和分块
+    参数:
+        filename: 文件名
+        binary: 二进制文件内容
+        from_page: 起始页码
+        to_page: 结束页码
+        lang: 文档语言（默认中文）
+        callback: 进度回调函数
+        **kwargs: 其他参数
+    返回:
+        处理后的文档块列表
     """
     doc = {
         "docnm_kwd": filename,
@@ -193,7 +234,6 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
     else:
         raise NotImplementedError(
             "file type not supported yet(doc, docx, pdf, txt supported)")
-
 
     # Remove 'Contents' part
     remove_contents_table(sections, eng)

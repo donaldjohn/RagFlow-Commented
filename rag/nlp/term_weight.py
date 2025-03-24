@@ -1,4 +1,4 @@
-    #
+#
 #  Copyright 2024 The InfiniFlow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,9 @@
 #  limitations under the License.
 #
 
+# 词权重计算模块
+# 用于计算文本中各个词的权重，支持中文分词、停用词过滤、词性标注等功能
+
 import logging
 import math
 import json
@@ -25,7 +28,11 @@ from api.utils.file_utils import get_project_base_directory
 
 
 class Dealer:
+    """词权重计算器类
+    用于处理文本分词、计算词权重、实体识别等功能
+    """
     def __init__(self):
+        # 初始化停用词集合
         self.stop_words = set(["请问",
                                "您",
                                "你",
@@ -59,6 +66,12 @@ class Dealer:
                                "相关"])
 
         def load_dict(fnm):
+            """加载词典文件
+            Args:
+                fnm: 词典文件路径
+            Returns:
+                词典数据字典或集合
+            """
             res = {}
             f = open(fnm, "r")
             while True:
@@ -78,6 +91,7 @@ class Dealer:
                 return set(res.keys())
             return res
 
+        # 加载实体识别词典和词频词典
         fnm = os.path.join(get_project_base_directory(), "rag/res")
         self.ne, self.df = {}, {}
         try:
@@ -90,14 +104,23 @@ class Dealer:
             logging.warning("Load term.freq FAIL!")
 
     def pretoken(self, txt, num=False, stpwd=True):
+        """文本预处理和分词
+        Args:
+            txt: 输入文本
+            num: 是否保留数字
+            stpwd: 是否过滤停用词
+        Returns:
+            分词结果列表
+        """
+        # 定义需要替换的标点符号模式
         patt = [
-            r"[~—\t @#%!<>,\.\?\":;'\{\}\[\]_=\(\)\|，。？》•●○↓《；‘’：“”【¥ 】…￥！、·（）×`&\\/「」\\]"
+            r"[~—\t @#%!<>,\.\?\":;'\{\}\[\]_=\(\)\|，。？》•●○↓《；''：""【¥ 】…￥！、·（）×`&\\/「」\\]"
         ]
-        rewt = [
-        ]
+        rewt = []
         for p, r in rewt:
             txt = re.sub(p, r, txt)
 
+        # 分词并过滤
         res = []
         for t in rag_tokenizer.tokenize(txt).split():
             tk = t
@@ -108,12 +131,17 @@ class Dealer:
                 if re.match(p, t):
                     tk = "#"
                     break
-            #tk = re.sub(r"([\+\\-])", r"\\\1", tk)
             if tk != "#" and tk:
                 res.append(tk)
         return res
 
     def tokenMerge(self, tks):
+        """合并相邻的单字词
+        Args:
+            tks: 分词结果列表
+        Returns:
+            合并后的分词结果列表
+        """
         def oneTerm(t): return len(t) == 1 or re.match(r"[0-9a-z]{1,2}$", t)
 
         res, i = [], 0
@@ -142,6 +170,12 @@ class Dealer:
         return [t for t in res if t]
 
     def ner(self, t):
+        """实体识别
+        Args:
+            t: 待识别的词
+        Returns:
+            实体类型
+        """
         if not self.ne:
             return ""
         res = self.ne.get(t, "")
@@ -149,6 +183,12 @@ class Dealer:
             return res
 
     def split(self, txt):
+        """文本分割
+        Args:
+            txt: 输入文本
+        Returns:
+            分割后的词列表
+        """
         tks = []
         for t in re.sub(r"[ \t]+", " ", txt).split():
             if tks and re.match(r".*[a-zA-Z]$", tks[-1]) and \
@@ -160,12 +200,21 @@ class Dealer:
         return tks
 
     def weights(self, tks, preprocess=True):
+        """计算词权重
+        Args:
+            tks: 分词结果列表
+            preprocess: 是否进行预处理
+        Returns:
+            词权重列表
+        """
         def skill(t):
+            """技能词权重计算"""
             if t not in self.sk:
                 return 1
             return 6
 
         def ner(t):
+            """实体词权重计算"""
             if re.match(r"[0-9,.]{2,}$", t):
                 return 2
             if re.match(r"[a-z]{1,2}$", t):
@@ -177,6 +226,7 @@ class Dealer:
             return m[self.ne[t]]
 
         def postag(t):
+            """词性权重计算"""
             t = rag_tokenizer.tag(t)
             if t in set(["r", "c", "d"]):
                 return 0.3
@@ -189,6 +239,7 @@ class Dealer:
             return 1
 
         def freq(t):
+            """词频权重计算"""
             if re.match(r"[0-9. -]{2,}$", t):
                 return 3
             s = rag_tokenizer.freq(t)
@@ -207,6 +258,7 @@ class Dealer:
             return max(s, 10)
 
         def df(t):
+            """文档频率权重计算"""
             if re.match(r"[0-9. -]{2,}$", t):
                 return 5
             if t in self.df:
@@ -222,6 +274,7 @@ class Dealer:
 
         def idf(s, N): return math.log10(10 + ((N - s + 0.5) / (s + 0.5)))
 
+        # 计算词权重
         tw = []
         if not preprocess:
             idf1 = np.array([idf(freq(t), 10000000) for t in tks])
@@ -240,5 +293,6 @@ class Dealer:
                 wts = [s for s in wts]
                 tw.extend(zip(tt, wts))
 
+        # 归一化权重
         S = np.sum([s for _, s in tw])
         return [(t, s / S) for t, s in tw]

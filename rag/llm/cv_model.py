@@ -31,13 +31,16 @@ from api.utils import get_uuid
 from api.utils.file_utils import get_project_base_directory
 
 
+# 基础抽象类，定义了视觉语言模型的基本接口
 class Base(ABC):
     def __init__(self, key, model_name):
         pass
 
+    # 描述图像内容的方法
     def describe(self, image, max_tokens=300):
         raise NotImplementedError("Please implement encode method!")
         
+    # 基于图像进行对话的方法
     def chat(self, system, history, gen_conf, image=""):
         if system:
             history[-1]["content"] = system + history[-1]["content"] + "user query: " + history[-1]["content"]
@@ -57,6 +60,7 @@ class Base(ABC):
         except Exception as e:
             return "**ERROR**: " + str(e), 0
 
+    # 基于图像进行流式对话的方法
     def chat_streamly(self, system, history, gen_conf, image=""):
         if system:
             history[-1]["content"] = system + history[-1]["content"] + "user query: " + history[-1]["content"]
@@ -93,6 +97,7 @@ class Base(ABC):
 
         yield tk_count
         
+    # 将图像转换为base64编码的工具方法
     def image2base64(self, image):
         if isinstance(image, bytes):
             return base64.b64encode(image).decode("utf-8")
@@ -105,6 +110,7 @@ class Base(ABC):
             image.save(buffered, format="PNG")
         return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
+    # 生成图像描述提示词的方法
     def prompt(self, b64):
         return [
             {
@@ -124,6 +130,7 @@ class Base(ABC):
             }
         ]
 
+    # 生成图像对话提示词的方法
     def chat_prompt(self, text, b64):
         return [
             {
@@ -139,6 +146,7 @@ class Base(ABC):
         ]
 
 
+# OpenAI GPT-4V 模型实现类
 class GptV4(Base):
     def __init__(self, key, model_name="gpt-4-vision-preview", lang="Chinese", base_url="https://api.openai.com/v1"):
         if not base_url:
@@ -162,6 +170,7 @@ class GptV4(Base):
         )
         return res.choices[0].message.content.strip(), res.usage.total_tokens
 
+# Azure OpenAI GPT-4V 模型实现类
 class AzureGptV4(Base):
     def __init__(self, key, model_name, lang="Chinese", **kwargs):
         api_key = json.loads(key).get('api_key', '')
@@ -186,6 +195,7 @@ class AzureGptV4(Base):
         return res.choices[0].message.content.strip(), res.usage.total_tokens
 
 
+# 阿里通义千问视觉模型实现类
 class QWenCV(Base):
     def __init__(self, key, model_name="qwen-vl-chat-v1", lang="Chinese", **kwargs):
         import dashscope
@@ -291,6 +301,7 @@ class QWenCV(Base):
         yield tk_count
 
 
+# 智谱 GLM-4V 模型实现类
 class Zhipu4V(Base):
     def __init__(self, key, model_name="glm-4v", lang="Chinese", **kwargs):
         self.client = ZhipuAI(api_key=key)
@@ -366,6 +377,7 @@ class Zhipu4V(Base):
         yield tk_count
 
 
+# Ollama 本地视觉模型实现类
 class OllamaCV(Base):
     def __init__(self, key, model_name, lang="Chinese", **kwargs):
         self.client = Client(host=kwargs["base_url"])
@@ -455,6 +467,7 @@ class OllamaCV(Base):
         yield 0
 
 
+# LocalAI 本地视觉模型实现类
 class LocalAICV(GptV4):
     def __init__(self, key, model_name, base_url, lang="Chinese"):
         if not base_url:
@@ -466,6 +479,7 @@ class LocalAICV(GptV4):
         self.lang = lang
 
 
+# Xinference 视觉模型实现类
 class XinferenceCV(Base):
     def __init__(self, key, model_name="", lang="Chinese", base_url=""):
         if base_url.split("/")[-1] != "v1":
@@ -484,6 +498,7 @@ class XinferenceCV(Base):
         )
         return res.choices[0].message.content.strip(), res.usage.total_tokens
 
+# Google Gemini 视觉模型实现类
 class GeminiCV(Base):
     def __init__(self, key, model_name="gemini-1.0-pro-vision-latest", lang="Chinese", **kwargs):
         from google.generativeai import client, GenerativeModel
@@ -564,6 +579,7 @@ class GeminiCV(Base):
         yield response._chunks[-1].usage_metadata.total_token_count
 
 
+# OpenRouter 视觉模型实现类
 class OpenRouterCV(GptV4):
     def __init__(
         self,
@@ -579,6 +595,7 @@ class OpenRouterCV(GptV4):
         self.lang = lang
 
 
+# 本地通用视觉模型实现类
 class LocalCV(Base):
     def __init__(self, key, model_name="glm-4v", lang="Chinese", **kwargs):
         pass
@@ -587,6 +604,7 @@ class LocalCV(Base):
         return "", 0
 
 
+# NVIDIA 视觉模型实现类
 class NvidiaCV(Base):
     def __init__(
         self,
@@ -649,6 +667,7 @@ class NvidiaCV(Base):
         ]
 
 
+# StepFun 视觉模型实现类
 class StepFunCV(GptV4):
     def __init__(self, key, model_name="step-1v-8k", lang="Chinese", base_url="https://api.stepfun.com/v1"):
         if not base_url:
@@ -658,6 +677,7 @@ class StepFunCV(GptV4):
         self.lang = lang
 
 
+# LM Studio 视觉模型实现类
 class LmStudioCV(GptV4):
     def __init__(self, key, model_name, lang="Chinese", base_url=""):
         if not base_url:
@@ -669,6 +689,7 @@ class LmStudioCV(GptV4):
         self.lang = lang
 
 
+# OpenAI API 视觉模型实现类
 class OpenAI_APICV(GptV4):
     def __init__(self, key, model_name, lang="Chinese", base_url=""):
         if not base_url:
@@ -680,6 +701,7 @@ class OpenAI_APICV(GptV4):
         self.lang = lang
 
 
+# TogetherAI 视觉模型实现类
 class TogetherAICV(GptV4):
     def __init__(self, key, model_name, lang="Chinese", base_url="https://api.together.xyz/v1"):
         if not base_url:
@@ -687,6 +709,7 @@ class TogetherAICV(GptV4):
         super().__init__(key, model_name,lang,base_url)
 
 
+# Yi 视觉模型实现类
 class YiCV(GptV4):
     def __init__(self, key, model_name, lang="Chinese",base_url="https://api.lingyiwanwu.com/v1",):
         if not base_url:
@@ -694,6 +717,7 @@ class YiCV(GptV4):
         super().__init__(key, model_name,lang,base_url)
 
 
+# 腾讯混元视觉模型实现类
 class HunyuanCV(Base):
     def __init__(self, key, model_name, lang="Chinese",base_url=None):
         from tencentcloud.common import credential
