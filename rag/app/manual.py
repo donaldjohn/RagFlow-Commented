@@ -14,6 +14,12 @@
 #  limitations under the License.
 #
 
+"""
+手册文档解析模块
+该模块专门用于处理手册类文档（包括PDF、DOCX等格式）的解析
+主要功能包括文档分块、表格识别、图片处理等
+"""
+
 import logging
 import copy
 import re
@@ -28,12 +34,33 @@ from PIL import Image
 
 
 class Pdf(PdfParser):
+    """PDF手册文档解析器类
+    继承自PdfParser，专门用于处理手册类PDF文档
+    提供OCR识别、布局分析、表格识别和文本提取等功能
+    """
+    
     def __init__(self):
         self.model_speciess = ParserType.MANUAL.value
         super().__init__()
 
     def __call__(self, filename, binary=None, from_page=0,
                  to_page=100000, zoomin=3, callback=None):
+        """PDF文档解析的主要方法
+        包含以下处理步骤：
+        1. OCR识别
+        2. 布局分析
+        3. 表格识别
+        4. 文本合并和清理
+        参数:
+            filename: 文件名
+            binary: 二进制文件内容
+            from_page: 起始页码
+            to_page: 结束页码
+            zoomin: 放大倍数
+            callback: 进度回调函数
+        返回:
+            解析后的文本和表格内容
+        """
         from timeit import default_timer as timer
         start = timer()
         callback(msg="OCR started")
@@ -45,9 +72,6 @@ class Pdf(PdfParser):
             callback
         )
         callback(msg="OCR finished ({:.2f}s)".format(timer() - start))
-        # for bb in self.boxes:
-        #    for b in bb:
-        #        print(b)
         logging.debug("OCR: {}".format(timer() - start))
 
         start = timer()
@@ -66,7 +90,7 @@ class Pdf(PdfParser):
         self._filter_forpages()
         callback(0.68, "Text merged ({:.2f}s)".format(timer() - start))
 
-        # clean mess
+        # 清理文本中的多余空白字符
         for b in self.boxes:
             b["text"] = re.sub(r"([\t 　]|\u3000){2,}", " ", b["text"].strip())
 
@@ -75,10 +99,22 @@ class Pdf(PdfParser):
 
 
 class Docx(DocxParser):
+    """DOCX手册文档解析器类
+    继承自DocxParser，专门用于处理手册类DOCX文档
+    提供文档解析、图片处理和表格识别等功能
+    """
+    
     def __init__(self):
         pass
 
     def get_picture(self, document, paragraph):
+        """从段落中提取图片
+        参数:
+            document: DOCX文档对象
+            paragraph: 段落对象
+        返回:
+            提取到的图片对象
+        """
         img = paragraph._element.xpath('.//pic:pic')
         if not img:
             return None
@@ -90,6 +126,14 @@ class Docx(DocxParser):
         return image
 
     def concat_img(self, img1, img2):
+        """合并两张图片
+        将两张图片垂直拼接在一起
+        参数:
+            img1: 第一张图片
+            img2: 第二张图片
+        返回:
+            合并后的图片对象
+        """
         if img1 and not img2:
             return img1
         if not img1 and img2:
@@ -109,6 +153,17 @@ class Docx(DocxParser):
         return new_image
 
     def __call__(self, filename, binary=None, from_page=0, to_page=100000, callback=None):
+        """DOCX文档解析的主要方法
+        解析文档并提取问题和答案对，以及表格内容
+        参数:
+            filename: 文件名
+            binary: 二进制文件内容
+            from_page: 起始页码
+            to_page: 结束页码
+            callback: 进度回调函数
+        返回:
+            解析后的问题答案对和表格内容
+        """
         self.doc = Document(
             filename) if not binary else Document(BytesIO(binary))
         pn = 0
@@ -121,11 +176,11 @@ class Docx(DocxParser):
             question_level, p_text = 0, ''
             if from_page <= pn < to_page and p.text.strip():
                 question_level, p_text = docx_question_level(p)
-            if not question_level or question_level > 6: # not a question
+            if not question_level or question_level > 6: # 不是问题
                 last_answer = f'{last_answer}\n{p_text}'
                 current_image = self.get_picture(self.doc, p)
                 last_image = self.concat_img(last_image, current_image)
-            else:   # is a question
+            else:   # 是问题
                 if last_answer or last_image:
                     sum_question = '\n'.join(question_stack)
                     if sum_question:
@@ -172,8 +227,18 @@ class Docx(DocxParser):
 
 def chunk(filename, binary=None, from_page=0, to_page=100000,
           lang="Chinese", callback=None, **kwargs):
-    """
-        Only pdf is supported.
+    """文档分块处理的主函数
+    支持PDF和DOCX格式的手册文档解析
+    参数:
+        filename: 文件名
+        binary: 二进制文件内容
+        from_page: 起始页码
+        to_page: 结束页码
+        lang: 文档语言（默认中文）
+        callback: 进度回调函数
+        **kwargs: 其他参数
+    返回:
+        处理后的文档块列表
     """
     pdf_parser = None
     doc = {
@@ -191,8 +256,7 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
                                     from_page=from_page, to_page=to_page, callback=callback)
         if sections and len(sections[0]) < 3:
             sections = [(t, lvl, [[0] * 5]) for t, lvl in sections]
-        # set pivot using the most frequent type of title,
-        # then merge between 2 pivot
+        # 使用最频繁的标题类型设置基准，然后在两个基准之间合并
         if len(sections) > 0 and len(pdf_parser.outlines) / len(sections) > 0.03:
             max_lvl = max([lvl for _, lvl in pdf_parser.outlines])
             most_level = max(0, max_lvl - 1)
@@ -220,7 +284,6 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
             if lvl <= most_level and i > 0 and lvl != levels[i - 1]:
                 sid += 1
             sec_ids.append(sid)
-            # print(lvl, self.boxes[i]["text"], most_level, sid)
 
         sections = [(txt, sec_ids[i], poss)
                     for i, (txt, _, poss) in enumerate(sections)]
@@ -231,6 +294,16 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
                             [(p[0] + 1 - from_page, p[1], p[2], p[3], p[4]) for p in poss]))
 
         def tag(pn, left, right, top, bottom):
+            """生成位置标签
+            参数:
+                pn: 页码
+                left: 左边距
+                right: 右边距
+                top: 上边距
+                bottom: 下边距
+            返回:
+                格式化的位置标签字符串
+            """
             if pn + left + right + top + bottom == 0:
                 return ""
             return "@@{}\t{:.1f}\t{:.1f}\t{:.1f}\t{:.1f}##" \

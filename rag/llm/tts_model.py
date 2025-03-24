@@ -39,42 +39,85 @@ from pydantic import BaseModel, conint
 from rag.utils import num_tokens_from_string
 
 
+# 用于存储参考音频的数据模型
 class ServeReferenceAudio(BaseModel):
-    audio: bytes
-    text: str
+    """参考音频数据模型
+    Attributes:
+        audio: 音频数据
+        text: 对应的文本
+    """
+    audio: bytes  # 音频数据
+    text: str     # 对应的文本
 
 
+# TTS请求的数据模型
 class ServeTTSRequest(BaseModel):
-    text: str
-    chunk_length: Annotated[int, conint(ge=100, le=300, strict=True)] = 200
-    # Audio format
-    format: Literal["wav", "pcm", "mp3"] = "mp3"
-    mp3_bitrate: Literal[64, 128, 192] = 128
-    # References audios for in-context learning
-    references: list[ServeReferenceAudio] = []
-    # Reference id
-    # For example, if you want use https://fish.audio/m/7f92f8afb8ec43bf81429cc1c9199cb1/
-    # Just pass 7f92f8afb8ec43bf81429cc1c9199cb1
-    reference_id: str | None = None
-    # Normalize text for en & zh, this increase stability for numbers
-    normalize: bool = True
-    # Balance mode will reduce latency to 300ms, but may decrease stability
-    latency: Literal["normal", "balanced"] = "normal"
+    """TTS请求数据模型
+    Attributes:
+        text: 要转换的文本
+        chunk_length: 分块长度(100-300)
+        format: 输出音频格式(wav/pcm/mp3)
+        mp3_bitrate: MP3比特率(64/128/192)
+        references: 参考音频列表
+        reference_id: 参考音频ID
+        normalize: 是否标准化文本
+        latency: 延迟模式(normal/balanced)
+    """
+    text: str     # 要转换的文本
+    chunk_length: Annotated[int, conint(ge=100, le=300, strict=True)] = 200  # 分块长度
+    format: Literal["wav", "pcm", "mp3"] = "mp3"  # 输出音频格式
+    mp3_bitrate: Literal[64, 128, 192] = 128     # MP3比特率
+    references: list[ServeReferenceAudio] = []    # 参考音频列表
+    reference_id: str | None = None              # 参考音频ID
+    normalize: bool = True                       # 是否标准化文本
+    latency: Literal["normal", "balanced"] = "normal"  # 延迟模式
 
 
+# TTS模型的基础抽象类
 class Base(ABC):
+    """TTS模型的基础抽象类
+    定义了TTS模型的基本接口
+    """
     def __init__(self, key, model_name, base_url):
+        """初始化TTS模型
+        Args:
+            key: API密钥
+            model_name: 模型名称
+            base_url: API基础URL
+        """
         pass
 
     def tts(self, audio):
+        """文本转语音
+        Args:
+            audio: 输入文本
+        Returns:
+            音频数据生成器
+        """
         pass
 
     def normalize_text(self, text):
+        """标准化文本，移除特殊标记
+        Args:
+            text: 输入文本
+        Returns:
+            标准化后的文本
+        """
         return re.sub(r'(\*\*|##\d+\$\$|#)', '', text)
 
 
+# FishAudio的TTS模型实现类
 class FishAudioTTS(Base):
+    """FishAudio的TTS模型实现
+    使用FishAudio API进行文本转语音
+    """
     def __init__(self, key, model_name, base_url="https://api.fish.audio/v1/tts"):
+        """初始化FishAudio TTS
+        Args:
+            key: API密钥
+            model_name: 模型名称
+            base_url: API基础URL
+        """
         if not base_url:
             base_url = "https://api.fish.audio/v1/tts"
         key = json.loads(key)
@@ -86,11 +129,19 @@ class FishAudioTTS(Base):
         self.base_url = base_url
 
     def tts(self, text):
+        """执行文本转语音
+        Args:
+            text: 输入文本
+        Returns:
+            音频数据生成器
+        """
         from http import HTTPStatus
 
+        # 标准化文本
         text = self.normalize_text(text)
         request = ServeTTSRequest(text=text, reference_id=self.ref_id)
 
+        # 使用httpx客户端发送请求
         with httpx.Client() as client:
             try:
                 with client.stream(
@@ -103,6 +154,7 @@ class FishAudioTTS(Base):
                         timeout=None,
                 ) as response:
                     if response.status_code == HTTPStatus.OK:
+                        # 流式返回音频数据
                         for chunk in response.iter_bytes():
                             yield chunk
                     else:
@@ -114,23 +166,42 @@ class FishAudioTTS(Base):
                 raise RuntimeError(f"**ERROR**: {e}")
 
 
+# 通义千问的TTS模型实现类
 class QwenTTS(Base):
+    """通义千问的TTS模型实现
+    使用通义千问API进行文本转语音
+    """
     def __init__(self, key, model_name, base_url=""):
+        """初始化通义千问TTS
+        Args:
+            key: API密钥
+            model_name: 模型名称
+            base_url: API基础URL
+        """
         import dashscope
 
         self.model_name = model_name
         dashscope.api_key = key
 
     def tts(self, text):
+        """执行文本转语音
+        Args:
+            text: 输入文本
+        Returns:
+            音频数据生成器
+        """
         from dashscope.api_entities.dashscope_response import SpeechSynthesisResponse
         from dashscope.audio.tts import ResultCallback, SpeechSynthesizer, SpeechSynthesisResult
         from collections import deque
 
+        # 定义回调类处理音频数据
         class Callback(ResultCallback):
+            """音频数据回调处理类"""
             def __init__(self) -> None:
                 self.dque = deque()
 
             def _run(self):
+                """运行音频数据生成器"""
                 while True:
                     if not self.dque:
                         time.sleep(0)
@@ -142,21 +213,27 @@ class QwenTTS(Base):
                         break
 
             def on_open(self):
+                """连接打开时的回调"""
                 pass
 
             def on_complete(self):
+                """合成完成时的回调"""
                 self.dque.append(None)
 
             def on_error(self, response: SpeechSynthesisResponse):
+                """发生错误时的回调"""
                 raise RuntimeError(str(response))
 
             def on_close(self):
+                """连接关闭时的回调"""
                 pass
 
             def on_event(self, result: SpeechSynthesisResult):
+                """收到音频数据时的回调"""
                 if result.get_audio_frame() is not None:
                     self.dque.append(result.get_audio_frame())
 
+        # 标准化文本并开始合成
         text = self.normalize_text(text)
         callback = Callback()
         SpeechSynthesizer.call(model=self.model_name,
@@ -164,6 +241,7 @@ class QwenTTS(Base):
                                callback=callback,
                                format="mp3")
         try:
+            # 流式返回音频数据
             for data in callback._run():
                 yield data
             yield num_tokens_from_string(text)
@@ -172,8 +250,18 @@ class QwenTTS(Base):
             raise RuntimeError(f"**ERROR**: {e}")
 
 
+# OpenAI的TTS模型实现类
 class OpenAITTS(Base):
+    """OpenAI的TTS模型实现
+    使用OpenAI API进行文本转语音
+    """
     def __init__(self, key, model_name="tts-1", base_url="https://api.openai.com/v1"):
+        """初始化OpenAI TTS
+        Args:
+            key: API密钥
+            model_name: 模型名称
+            base_url: API基础URL
+        """
         if not base_url:
             base_url = "https://api.openai.com/v1"
         self.api_key = key
@@ -185,6 +273,14 @@ class OpenAITTS(Base):
         }
 
     def tts(self, text, voice="alloy"):
+        """执行文本转语音
+        Args:
+            text: 输入文本
+            voice: 语音类型
+        Returns:
+            音频数据生成器
+        """
+        # 标准化文本
         text = self.normalize_text(text)
         payload = {
             "model": self.model_name,
@@ -192,6 +288,7 @@ class OpenAITTS(Base):
             "input": text
         }
 
+        # 发送请求并流式返回音频数据
         response = requests.post(f"{self.base_url}/audio/speech", headers=self.headers, json=payload, stream=True)
 
         if response.status_code != 200:
@@ -201,12 +298,22 @@ class OpenAITTS(Base):
                 yield chunk
 
 
+# 讯飞星火的TTS模型实现类
 class SparkTTS:
+    """讯飞星火的TTS模型实现
+    使用讯飞星火API进行文本转语音
+    """
     STATUS_FIRST_FRAME = 0
     STATUS_CONTINUE_FRAME = 1
     STATUS_LAST_FRAME = 2
 
     def __init__(self, key, model_name, base_url=""):
+        """初始化讯飞星火TTS
+        Args:
+            key: API密钥
+            model_name: 模型名称
+            base_url: API基础URL
+        """
         key = json.loads(key)
         self.APPID = key.get("spark_app_id", "xxxxxxx")
         self.APISecret = key.get("spark_api_secret", "xxxxxxx")
@@ -215,10 +322,11 @@ class SparkTTS:
         self.CommonArgs = {"app_id": self.APPID}
         self.audio_queue = queue.Queue()
 
-    # 用来存储音频数据
-
-    # 生成url
     def create_url(self):
+        """生成WebSocket URL
+        Returns:
+            WebSocket连接URL
+        """
         url = 'wss://tts-api.xfyun.cn/v2/tts'
         now = datetime.now()
         date = format_date_time(mktime(now.timetuple()))
@@ -240,17 +348,27 @@ class SparkTTS:
         return url
 
     def tts(self, text):
+        """执行文本转语音
+        Args:
+            text: 输入文本
+        Returns:
+            音频数据生成器
+        """
+        # 准备业务参数
         BusinessArgs = {"aue": "lame", "sfl": 1, "auf": "audio/L16;rate=16000", "vcn": self.model_name, "tte": "utf8"}
         Data = {"status": 2, "text": base64.b64encode(text.encode('utf-8')).decode('utf-8')}
         CommonArgs = {"app_id": self.APPID}
         audio_queue = self.audio_queue
         model_name = self.model_name
 
+        # 定义WebSocket回调类
         class Callback:
+            """WebSocket回调处理类"""
             def __init__(self):
                 self.audio_queue = audio_queue
 
             def on_message(self, ws, message):
+                """收到消息时的回调"""
                 message = json.loads(message)
                 code = message["code"]
                 sid = message["sid"]
@@ -266,12 +384,15 @@ class SparkTTS:
                     self.audio_queue.put(audio)
 
             def on_error(self, ws, error):
+                """发生错误时的回调"""
                 raise Exception(error)
 
             def on_close(self, ws, close_status_code, close_msg):
+                """连接关闭时的回调"""
                 self.audio_queue.put(None)  # 放入 None 作为结束标志
 
             def on_open(self, ws):
+                """连接打开时的回调"""
                 def run(*args):
                     d = {"common": CommonArgs,
                          "business": BusinessArgs,
@@ -280,6 +401,7 @@ class SparkTTS:
 
                 thread.start_new_thread(run, ())
 
+        # 建立WebSocket连接并处理音频数据
         wsUrl = self.create_url()
         websocket.enableTrace(False)
         a = Callback()
@@ -299,8 +421,18 @@ class SparkTTS:
             yield audio_chunk
 
 
+# Xinference的TTS模型实现类
 class XinferenceTTS:
+    """Xinference的TTS模型实现
+    使用Xinference API进行文本转语音
+    """
     def __init__(self, key, model_name, **kwargs):
+        """初始化Xinference TTS
+        Args:
+            key: API密钥
+            model_name: 模型名称
+            **kwargs: 其他参数
+        """
         self.base_url = kwargs.get("base_url", None)
         self.model_name = model_name
         self.headers = {
@@ -309,12 +441,22 @@ class XinferenceTTS:
         }
 
     def tts(self, text, voice="中文女", stream=True):
+        """执行文本转语音
+        Args:
+            text: 输入文本
+            voice: 语音类型
+            stream: 是否流式返回
+        Returns:
+            音频数据生成器
+        """
+        # 准备请求参数
         payload = {
             "model": self.model_name,
             "input": text,
             "voice": voice
         }
 
+        # 发送请求并流式返回音频数据
         response = requests.post(
             f"{self.base_url}/v1/audio/speech",
             headers=self.headers,
@@ -330,8 +472,18 @@ class XinferenceTTS:
                 yield chunk
 
 
+# Ollama的TTS模型实现类
 class OllamaTTS(Base):
+    """Ollama的TTS模型实现
+    使用Ollama API进行文本转语音
+    """
     def __init__(self, key, model_name="ollama-tts", base_url="https://api.ollama.ai/v1"):
+        """初始化Ollama TTS
+        Args:
+            key: API密钥
+            model_name: 模型名称
+            base_url: API基础URL
+        """
         if not base_url: 
             base_url = "https://api.ollama.ai/v1"
         self.model_name = model_name
@@ -341,12 +493,21 @@ class OllamaTTS(Base):
         }
 
     def tts(self, text, voice="standard-voice"):
+        """执行文本转语音
+        Args:
+            text: 输入文本
+            voice: 语音类型
+        Returns:
+            音频数据生成器
+        """
+        # 准备请求参数
         payload = {
             "model": self.model_name,
             "voice": voice,
             "input": text
         }
 
+        # 发送请求并流式返回音频数据
         response = requests.post(f"{self.base_url}/audio/tts", headers=self.headers, json=payload, stream=True)
 
         if response.status_code != 200:
@@ -357,8 +518,19 @@ class OllamaTTS(Base):
                 yield chunk
 
 
+# GPUStack的TTS模型实现类
+
 class GPUStackTTS:
+    """GPUStack的TTS模型实现
+    使用GPUStack API进行文本转语音
+    """
     def __init__(self, key, model_name, **kwargs):
+        """初始化GPUStack TTS
+        Args:
+            key: API密钥
+            model_name: 模型名称
+            **kwargs: 其他参数
+        """
         self.base_url = kwargs.get("base_url", None)
         self.api_key = key
         self.model_name = model_name
@@ -369,12 +541,22 @@ class GPUStackTTS:
         }
 
     def tts(self, text, voice="Chinese Female", stream=True):
+        """执行文本转语音
+        Args:
+            text: 输入文本
+            voice: 语音类型
+            stream: 是否流式返回
+        Returns:
+            音频数据生成器
+        """
+        # 准备请求参数
         payload = {
             "model": self.model_name,
             "input": text,
             "voice": voice
         }
 
+        # 发送请求并流式返回音频数据
         response = requests.post(
             f"{self.base_url}/v1-openai/audio/speech",
             headers=self.headers,
